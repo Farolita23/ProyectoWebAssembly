@@ -1,60 +1,43 @@
 import './style.css'
-import heroImg from './assets/hero.png'
-import typescriptLogo from './assets/typescript.svg'
-import viteLogo from './assets/vite.svg'
-import { setupCounter } from './counter.ts'
 
+// 1. Inyectar la estructura HTML básica de la UI y el Canvas en el DOM
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-<section id="center">
-  <div class="hero">
-    <img src="${heroImg}" class="base" width="170" height="179">
-    <img src="${typescriptLogo}" class="framework" alt="TypeScript logo"/>
-    <img src="${viteLogo}" class="vite" alt="Vite logo" />
+  <div id="canvas-container">
+    <canvas id="webgpu-canvas"></canvas>
   </div>
-  <div>
-    <h1>Get started</h1>
-    <p>Edit <code>src/main.ts</code> and save to test <code>HMR</code></p>
-  </div>
-  <button id="counter" type="button" class="counter"></button>
-</section>
 
-<div class="ticks"></div>
-
-<section id="next-steps">
-  <div id="docs">
-    <svg class="icon" role="presentation" aria-hidden="true"><use href="/icons.svg#documentation-icon"></use></svg>
-    <h2>Documentation</h2>
-    <p>Your questions, answered</p>
-    <ul>
-      <li>
-        <a href="https://vite.dev/" target="_blank">
-          <img class="logo" src="${viteLogo}" alt="" />
-          Explore Vite
-        </a>
-      </li>
-      <li>
-        <a href="https://www.typescriptlang.org" target="_blank">
-          <img class="button-icon" src="${typescriptLogo}" alt="">
-          Learn more
-        </a>
-      </li>
-    </ul>
+  <div class="ui-overlay">
+    <h1>ARTE GENERATIVO AUDIO-REACTIVO</h1>
+    <input type="file" id="audio-file-input" accept="audio/*" />
+    <audio id="audio-element" controls style="display: none;"></audio>
+    <div id="track-info" style="font-size: 12px; color: #64748b;">Sube una pista de audio para empezar</div>
   </div>
-  <div id="social">
-    <svg class="icon" role="presentation" aria-hidden="true"><use href="/icons.svg#social-icon"></use></svg>
-    <h2>Connect with us</h2>
-    <p>Join the Vite community</p>
-    <ul>
-      <li><a href="https://github.com/vitejs/vite" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#github-icon"></use></svg>GitHub</a></li>
-      <li><a href="https://chat.vite.dev/" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#discord-icon"></use></svg>Discord</a></li>
-      <li><a href="https://x.com/vite_js" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#x-icon"></use></svg>X.com</a></li>
-      <li><a href="https://bsky.app/profile/vite.dev" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#bluesky-icon"></use></svg>Bluesky</a></li>
-    </ul>
-  </div>
-</section>
-
-<div class="ticks"></div>
-<section id="spacer"></section>
 `
 
-setupCounter(document.querySelector<HTMLButtonElement>('#counter')!)
+// 2. Lógica para manejar la carga y reproducción del archivo de audio local
+const fileInput = document.getElementById('audio-file-input') as HTMLInputElement;
+const audioElement = document.getElementById('audio-element') as HTMLAudioElement;
+const trackInfo = document.getElementById('track-info') as HTMLDivElement;
+
+fileInput.addEventListener('change', (event) => {
+  const target = event.target as HTMLInputElement;
+  if (!target.files || target.files.length === 0) return;
+
+  const file = target.files[0];
+  const fileURL = URL.createObjectURL(file);
+
+  // Asignar la URL del archivo local al elemento de audio HTML5
+  audioElement.src = fileURL;
+  audioElement.style.display = 'block'; // Mostrar el reproductor nativo
+  audioElement.load();
+  
+  // Reproducir automáticamente y actualizar texto
+  audioElement.play().catch((error) => {
+    console.error("Error al reproducir el audio:", error);
+  });
+
+  trackInfo.textContent = `Reproduciendo: ${file.name}`;
+  
+  // Dejamos preparado el terreno para conectar el AudioContext en el Sprint 2
+  console.log("Archivo de audio cargado correctamente:", file.name);
+});
