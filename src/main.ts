@@ -17,7 +17,63 @@ const fileInput = document.getElementById('audio-file-input') as HTMLInputElemen
 const audioElement = document.getElementById('audio-element') as HTMLAudioElement;
 const trackInfo = document.getElementById('track-info') as HTMLDivElement;
 const canvas = document.getElementById('webgpu-canvas') as HTMLCanvasElement;
-const ctx = canvas.getContext('2d')!;
+const adapter = await navigator.gpu?.requestAdapter();
+
+if (!adapter){
+  throw new Error("Este navegador no soporta WebGPU, comprueba si tienes esta funcion activada");
+}
+const device = await adapter.requestDevice();
+
+const context = canvas.getContext('webgpu') as GPUCanvasContext;
+if (!context) {
+  throw new Error("No se puede inicializar webGPU");
+}
+
+const format = navigator.gpu.getPreferredCanvasFormat();
+context.configure({
+  device: device,
+  format: format,
+  alphaMode: 'premultiplied'
+})
+
+// Cargar el código del shader WGSL
+const shaderModule = device.createShaderModule({
+  code: `
+    @vertex
+    fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4f {
+        var pos = array<vec2f, 3>(
+            vec2f(0.0, 0.5),
+            vec2f(-0.5, -0.5),
+            vec2f(0.5, -0.5)
+        );
+        return vec4f(pos[vertexIndex], 0.0, 1.0);
+    }
+
+    @fragment
+    fn fs_main() -> @location(0) vec4f {
+        return vec4f(0.47, 0.35, 1.0, 1.0);
+    }
+  `
+});
+
+// Crear el pipeline de renderizado
+const pipeline = device.createRenderPipeline({
+  layout: 'auto',
+  vertex: {
+    module: shaderModule,
+    entryPoint: 'vs_main',
+  },
+  fragment: {
+    module: shaderModule,
+    entryPoint: 'fs_main',
+    targets: [{
+      format: format,
+    }],
+  },
+  primitive: {
+    topology: 'triangle-list',
+  },
+});
 
 // ---------- Motor de audio ----------
 let audioCtx: AudioContext | null = null;
@@ -62,7 +118,7 @@ fileInput.addEventListener('change', (event) => {
   trackInfo.textContent = `Reproduciendo: ${file.name}`;
 });
 
-// ---------- Canvas / resize ----------
+// ---------- Canvas / redimension ----------
 let W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
 
 function resizeCanvas() {
@@ -72,127 +128,38 @@ function resizeCanvas() {
   canvas.height = H * DPR;
   canvas.style.width = `${W}px`;
   canvas.style.height = `${H}px`;
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// ---------- Utilidades de color ----------
-function barColor(t: number, alpha = 1) {
-  // t: 0 (azul) -> 1 (morado/rosa), interpolación simple
-  const r = Math.round(59 + t * (216 - 59));
-  const g = Math.round(130 + t * (70 - 130));
-  const b = Math.round(246 + t * (255 - 246));
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+
+function drawWebGPU() {
+  requestAnimationFrame(drawWebGPU);
+
+  // Obtener la textura actual del canvas en pantalla
+  const textureView = context.getCurrentTexture().createView();
+
+  // 2. Configurar el pase de renderizado (limpiar pantalla con color oscuro)
+  const colorAttachment: GPURenderPassColorAttachment = {
+    view: textureView,
+    clearValue: { r: 0.07, g: 0.08, b: 0.1, a: 1.0 }, // #13151A
+    loadOp: 'clear',
+    storeOp: 'store',
+  };
+
+  const commandEncoder = device.createCommandEncoder();
+  const passEncoder = commandEncoder.beginRenderPass({
+    colorAttachments: [colorAttachment],
+  });
+
+  // Ejecutar el pipeline gráfico en la GPU
+  passEncoder.setPipeline(pipeline);
+  passEncoder.draw(3, 1, 0, 0); // Dibuja el triángulo base
+  passEncoder.end();
+
+  // Enviar los comandos a la cola de la GPU
+  device.queue.submit([commandEncoder.finish()]);
 }
 
-// ---------- Estado de animación ----------
-let time = 0;
-const barCount = 64; // número de barras a cada lado
-const blobPoints = 48;
+drawWebGPU();
 
-function draw() {
-  requestAnimationFrame(draw);
-  time += 0.008;
-
-  // Fondo oscuro con ligero fade para dejar rastro sutil
-  ctx.fillStyle = 'rgba(19, 21, 26, 0.35)';
-  ctx.fillRect(0, 0, W, H);
-
-  // Energía media (graves) para modular el blob
-  let bass = 0;
-  if (analyser && freqData) {
-    analyser.getByteFrequencyData(freqData);
-    const bassBins = freqData.slice(0, 12);
-    bass = bassBins.reduce((a, b) => a + b, 0) / bassBins.length / 255; // 0..1
-  }
-
-  drawBars();
-  drawBlob(bass);
-}
-
-function drawBars() {
-  const cx = W / 2;
-  const cy = H / 2;
-  const spacing = 8;
-  const maxBarHeight = H * 0.35;
-
-  for (let i = 0; i < barCount; i++) {
-    let amp = 0.05;
-    if (analyser && freqData) {
-      // muestreo logarítmico para dar más peso a graves/medios, como en la referencia
-      const idx = Math.floor(Math.pow(i / barCount, 1.6) * (freqData.length - 1));
-      amp = freqData[idx] / 255;
-    } else {
-      // idle: leve ondulación cuando no hay audio sonando
-      amp = 0.08 + 0.05 * Math.sin(time * 2 + i * 0.3);
-    }
-
-    const h = 4 + amp * maxBarHeight;
-    const t = i / barCount;
-    const color = barColor(t, 0.85);
-
-    ctx.save();
-    ctx.shadowBlur = 12;
-    ctx.shadowColor = color;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
-
-    // lado derecho
-    const xR = cx + i * spacing;
-    ctx.beginPath();
-    ctx.moveTo(xR, cy - h / 2);
-    ctx.lineTo(xR, cy + h / 2);
-    ctx.stroke();
-
-    // lado izquierdo (espejo)
-    const xL = cx - i * spacing;
-    ctx.beginPath();
-    ctx.moveTo(xL, cy - h / 2);
-    ctx.lineTo(xL, cy + h / 2);
-    ctx.stroke();
-
-    ctx.restore();
-  }
-}
-
-function drawBlob(bass: number) {
-  const cx = W / 2;
-  const cy = H / 2;
-  const baseRadius = Math.min(W, H) * (0.14 + bass * 0.06);
-
-  ctx.save();
-  ctx.beginPath();
-
-  for (let i = 0; i <= blobPoints; i++) {
-    const angle = (i / blobPoints) * Math.PI * 2;
-
-    // ruido orgánico: suma de senos con distintas frecuencias/fases animadas
-    const noise =
-      Math.sin(angle * 3 + time * 1.3) * 0.18 +
-      Math.sin(angle * 5 - time * 0.7) * 0.1 +
-      Math.sin(angle * 2 + time * 2.1) * 0.12;
-
-    const r = baseRadius * (1 + noise + bass * 0.25);
-    const x = cx + Math.cos(angle) * r;
-    const y = cy + Math.sin(angle) * r;
-
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-
-  const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, baseRadius * 1.6);
-  gradient.addColorStop(0, `rgba(120, 90, 255, ${0.55 + bass * 0.3})`);
-  gradient.addColorStop(0.6, `rgba(80, 50, 200, ${0.25 + bass * 0.2})`);
-  gradient.addColorStop(1, 'rgba(19, 21, 26, 0)');
-
-  ctx.fillStyle = gradient;
-  ctx.shadowBlur = 40 + bass * 40;
-  ctx.shadowColor = 'rgba(140, 100, 255, 0.6)';
-  ctx.fill();
-  ctx.restore();
-}
-
-draw();
